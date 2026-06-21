@@ -1,0 +1,85 @@
+<script>
+    function buildMenu() {
+        var navEl = document.getElementById('mainNav'); var r = currentUser.role; var html = '';
+        const addLink = (view, icon, text) => '<a class="nav-link" id="n-' + view + '" onclick="nav(\'' + view + '\')"><i class="bi ' + icon + '"></i> ' + text + '</a>';
+        if (r === 'SUPERADMIN' || r === 'ADMIN' || r === 'SUPERVISOR') {
+            html += addLink('dashboard', 'bi-grid-1x2', 'Dashboard');
+            html += addLink('crm', 'bi-chat-left-text', 'CRM 360°');
+            html += addLink('pipeline', 'bi-funnel', 'Pipeline Ventas');
+            html += addLink('productos', 'bi-box-seam', 'Productos y Lotes');
+        } else {
+            html += addLink('inicio', 'bi-house', 'Inicio');
+            html += addLink('tareas', 'bi-list-task', 'Mis Tareas');
+            html += addLink('productos', 'bi-box-seam', 'Catálogo');
+        }
+        navEl.innerHTML = html; buildMobileBottomNav();
+    }
+
+    function buildMobileBottomNav() {
+        var bn = document.getElementById('mobileBottomNav'); if(!bn) return;
+        bn.innerHTML = '<button class="bottom-nav-item" onclick="nav(\'dashboard\')"><i class="bi bi-grid-1x2"></i><span>Inicio</span></button>' +
+                       '<button class="bottom-nav-item" onclick="nav(\'productos\')"><i class="bi bi-box-seam"></i><span>Catálogo</span></button>';
+    }
+
+    function evaluateNotifications() {
+        var nb = document.getElementById('notificationBadge'), b = document.getElementById('notificationsBody');
+        if(!nb || !b) return; var alerts = (db.incidencias || []).filter(i => i.estado === 'ABIERTO');
+        nb.style.display = alerts.length ? 'inline-block' : 'none';
+        b.innerHTML = alerts.length ? '<div class="p-2 border-left small">Reclamos comerciales abiertos detectados</div>' : '<div class="text-center py-3 text-muted small">Sin alertas</div>';
+    }
+
+    function triggerGlobalSearch() {
+        var val = document.getElementById('globalSearchInput').value.toLowerCase().trim(), dd = document.getElementById('globalSearchDropdown');
+        if (!val || val.length < 2) { dd.style.display = 'none'; return; }
+        dd.innerHTML = '<a class="search-item" onclick="nav(\'productos\')"><i class="bi bi-search"></i> Coincidencias en catálogo...</a>';
+        dd.style.display = 'block';
+    }
+
+    function compressAndPreviewPhoto(input, previewId, base64Id) {
+        if (input.files && input.files[0]) {
+            var reader = new FileReader();
+            reader.onload = function (e) {
+                document.getElementById(previewId).src = e.target.result;
+                document.getElementById(base64Id).value = e.target.result.split(',')[1];
+            };
+            reader.readAsDataURL(input.files[0]);
+        }
+    }
+
+    function getGpsLocation() {
+        return new Promise((resolve, reject) => {
+            if (!navigator.geolocation) reject(new Error('GPS No soportado'));
+            else navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
+        });
+    }
+
+    function generateHash(obj) {
+        var str = JSON.stringify(obj || {}), hash = 0;
+        for (var i = 0; i < str.length; i++) hash = (hash * 31 + str.charCodeAt(i)) & 0xFFFFFFFF;
+        return hash.toString(16);
+    }
+
+    function showL(show) { document.getElementById('loader').style.display = show ? 'flex' : 'none'; }
+    function showToast(msg, type) {
+        var container = document.getElementById('toast-container');
+        var toast = document.createElement('div'); toast.className = 'toast-custom ' + (type || 'info');
+        toast.innerHTML = '<div>' + msg + '</div>'; container.appendChild(toast);
+        setTimeout(() => { toast.remove(); }, 3000);
+    }
+
+    function getLocalDateString() { var d = new Date(); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+    function formatDate(s) { return s ? new Date(s).toLocaleString('es-ES') : ''; }
+    function formatDateShort(s) { return s ? new Date(s).toLocaleDateString('es-ES') : ''; }
+    function humanize(s) { return s.toUpperCase(); }
+
+    function getClientName(id) { return (db.clientes || []).find(c => String(c.id) === String(id))?.nombre || 'N/A'; }
+    function getEmployeeName(id) { return (db.empleados || []).find(e => String(e.id) === String(id))?.nombre || 'N/A'; }
+    function getCompanyName(id) { return (db.empresas || []).find(e => String(e.id) === String(id))?.razonSocial || 'Ninguna'; }
+
+    function initExtraStyles() {
+        var s = document.createElement('style');
+        s.innerHTML = `.spin-animation { animation: spin 1.2s linear infinite; } @keyframes spin { 100% { transform: rotate(360deg); } }`;
+        document.head.appendChild(s);
+    }
+    initExtraStyles();
+</script>

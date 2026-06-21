@@ -1,0 +1,130 @@
+<script>
+    const safeStorage = {
+        _fallback: {},
+        getItem: function (key) { try { return localStorage.getItem(key); } catch (e) { return this._fallback[key] || null; } },
+        setItem: function (key, value) { try { localStorage.setItem(key, value); } catch (e) { this._fallback[key] = value; } },
+        removeItem: function (key) { try { localStorage.removeItem(key); } catch (e) { delete this._fallback[key]; } }
+    };
+
+    function initApp() {
+        console.log('[ERP] initApp iniciada');
+        var currentTheme = safeStorage.getItem('theme') || 'light';
+        if (currentTheme === 'auto') applyAutoTheme(); else applyTheme(currentTheme);
+
+        var session = safeStorage.getItem('asis_session_v8');
+        if (session) {
+            try {
+                var data = JSON.parse(session);
+                currentUser = data.user; db = data.db; _dbHash = data.hash || '';
+                showApp();
+            } catch (e) { safeStorage.removeItem('asis_session_v8'); }
+        }
+
+        // Asignación directa y nativa para evitar desbordamiento del Sandbox
+        var el = (id) => document.getElementById(id);
+        if (el('loginBtn')) el('loginBtn').addEventListener('click', doLogin);
+
+        var handleLoginEnter = (e) => { if (e.key === 'Enter') doLogin(); };
+        if (el('userIn')) el('userIn').addEventListener('keypress', handleLoginEnter);
+        if (el('passIn')) el('passIn').addEventListener('keypress', handleLoginEnter);
+
+        if (el('overlay')) el('overlay').addEventListener('click', () => toggleSidebar(false));
+        if (el('sidebarToggleOpenBtn')) el('sidebarToggleOpenBtn').addEventListener('click', () => toggleSidebar(true));
+        if (el('globalSearchInput')) el('globalSearchInput').addEventListener('input', triggerGlobalSearch);
+        if (el('themeToggleBtn')) el('themeToggleBtn').addEventListener('click', toggleTheme);
+        if (el('notificationBellBtn')) el('notificationBellBtn').addEventListener('click', toggleNotifications);
+        if (el('syncManualBtn')) el('syncManualBtn').addEventListener('click', syncManual);
+        if (el('logoutBtn')) el('logoutBtn').addEventListener('click', logout);
+
+        if (el('fabBtn')) el('fabBtn').addEventListener('click', toggleFabMenu);
+        if (el('fabActionAsistencia')) el('fabActionAsistencia').addEventListener('click', () => quickAction('asistencia'));
+        if (el('fabActionCliente')) el('fabActionCliente').addEventListener('click', () => quickAction('cliente'));
+        if (el('fabActionEmpresa')) el('fabActionEmpresa').addEventListener('click', () => quickAction('empresa'));
+        if (el('fabActionTarea')) el('fabActionTarea').addEventListener('click', () => quickAction('tarea'));
+
+        if (el('salidaProgramarCita')) el('salidaProgramarCita').addEventListener('change', () => {
+            var citaSel = el('citaSelectorContainer');
+            if (citaSel) citaSel.style.display = el('salidaProgramarCita').checked ? 'block' : 'none';
+        });
+
+        if (el('searchEmpresaInput')) el('searchEmpresaInput').addEventListener('input', filterSelectEmpresas);
+        if (el('searchClienteInput')) el('searchClienteInput').addEventListener('input', filterSelectClientes);
+    }
+
+    async function doLogin() {
+        var u = document.getElementById('userIn').value.trim();
+        var p = document.getElementById('passIn').value.trim();
+        if (!u || !p) { showToast('Ingrese credenciales', 'error'); return; }
+        showL(true);
+        try {
+            var data = await apiCall('POST', CONFIG.SCRIPT_URL, { action: 'login', usuario: u, password: p });
+            if (data && data.status === 'success') {
+                currentUser = data; db = data.db; _dbHash = generateHash(db);
+                safeStorage.setItem('asis_session_v8', JSON.stringify({ user: currentUser, db, hash: _dbHash }));
+                showApp();
+                showToast('Bienvenido, ' + currentUser.nombre, 'success');
+            } else { showToast(data.message || 'Credenciales incorrectas', 'error'); }
+        } catch (e) { showToast('Error de entorno: ' + e.message, 'error'); }
+        finally { showL(false); }
+    }
+
+    function showApp() {
+        if (currentUser && currentUser.empId) currentUser.empId = String(currentUser.empId).trim();
+        document.getElementById('loginView').style.display = 'none';
+        document.getElementById('appContainer').style.display = 'block';
+        document.getElementById('sideUserName').innerText = currentUser.nombre || currentUser.usuario || 'Usuario';
+        document.getElementById('sideUserRoleBadge').innerHTML = '<span class="badge bg-info text-white rounded-pill px-2 py-1 small">' + currentUser.role + '</span>';
+
+        buildMenu();
+        var defaultView = 'dashboard';
+        if (currentUser.role === 'CLIENTE') defaultView = 'portal_cliente';
+        else if (currentUser.role === 'EMPLEADO') defaultView = 'inicio';
+        nav(defaultView);
+
+        setTimeout(function () { sync(); }, 200);
+        if (refreshInterval) clearInterval(refreshInterval);
+        refreshInterval = setInterval(function () { sync(); }, CONFIG.SYNC_INTERVAL);
+    }
+
+    function logout() {
+        if (refreshInterval) clearInterval(refreshInterval);
+        safeStorage.removeItem('asis_session_v8');
+        document.getElementById('appContainer').style.display = 'none';
+        document.getElementById('loginView').style.display = 'flex';
+        document.getElementById('userIn').value = ''; document.getElementById('passIn').value = '';
+        currentUser = null; db = {}; _dbHash = '';
+    }
+
+    function toggleTheme() {
+        var html = document.documentElement;
+        var next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+        applyTheme(next); safeStorage.setItem('theme', next);
+    }
+
+    function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        var moon = document.getElementById('themeIconMoon'), sun = document.getElementById('themeIconSun');
+        if (theme === 'dark') { moon?.classList.remove('d-none'); sun?.classList.add('d-none'); }
+        else { sun?.classList.remove('d-none'); moon?.classList.add('d-none'); }
+    }
+
+    function applyAutoTheme() { applyTheme(window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'); }
+    function toggleSidebar(force) {
+        var sb = document.getElementById('sidebar'), ov = document.getElementById('overlay');
+        var open = (force !== undefined) ? force : !sb.classList.contains('open');
+        sb.classList.toggle('open', open); ov.classList.toggle('active', open);
+    }
+    function toggleFabMenu() {
+        var menu = document.getElementById('fabMenu'), btn = document.querySelector('.fab-btn');
+        var isOpen = menu.classList.contains('open');
+        menu.classList.toggle('open', !isOpen); btn.classList.toggle('active', !isOpen);
+    }
+    function quickAction(action) {
+        toggleFabMenu();
+        if (action === 'asistencia') nav('asistencia');
+        else if (action === 'cliente') openNewModal('clientes');
+        else if (action === 'empresa') openNewModal('empresas');
+        else if (action === 'tarea') openEventModal(null);
+    }
+    function toggleNotifications() { var dd = document.getElementById('notificationsDropdown'); dd.style.display = dd.style.display === 'block' ? 'none' : 'block'; }
+</script>

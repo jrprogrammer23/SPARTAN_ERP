@@ -1,0 +1,83 @@
+<script>
+    var db = {}, currentUser = null, currentTable = "", editingId = null;
+    var _dbHash = '', _currentView = '', _syncing = false;
+    
+    var _empNameCache = new Map();
+    var _clientNameCache = new Map();
+    var _companyNameCache = new Map();
+
+    async function parseResponseJson(response) {
+        var text = await response.text();
+        if (response.status !== 200) {
+            throw new Error('HTTP ' + response.status + ': ' + (text ? text.substring(0, 150) : 'Sin respuesta del servidor'));
+        }
+        try { return JSON.parse(text); } catch (e) {
+            throw new Error('Error de estructura. Contenido: ' + text.substring(0, 200));
+        }
+    }
+
+    // Puente unificado que detecta automáticamente si está en Sandbox o Local
+    async function apiCall(method, url, payload) {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+            return new Promise((resolve, reject) => {
+                if (method === 'POST') {
+                    google.script.run
+                        .withSuccessHandler(function (res) { resolve(res); })
+                        .withFailureHandler(function (err) { reject(new Error(err.message || 'Error en motor (POST)')); })
+                        .apiPost(payload);
+                } else {
+                    var token = '';
+                    if (url.indexOf('token=') > -1) token = url.split('token=')[1].split('&')[0];
+                    google.script.run
+                        .withSuccessHandler(function (res) { resolve(res); })
+                        .withFailureHandler(function (err) { reject(new Error(err.message || 'Error en motor (GET)')); })
+                        .apiGet({ token: token });
+                }
+            });
+        } else {
+            var response = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'text/plain' },
+                body: method === 'POST' ? JSON.stringify(payload) : undefined
+            });
+            return await parseResponseJson(response);
+        }
+    }
+
+    async function sync() {
+        if (_syncing || !currentUser) return;
+        _syncing = true;
+        var syncIcon = document.getElementById('syncIcon');
+        if (syncIcon) syncIcon.classList.add('spin-animation');
+
+        try {
+            var url = CONFIG.SCRIPT_URL + '?action=getData&token=' + currentUser.token;
+            var data = await apiCall('GET', url);
+            if (data && data._meta && data._meta.newToken) {
+                currentUser.token = data._meta.newToken;
+                delete data._meta;
+            }
+            var newHash = generateHash(data);
+            if (newHash !== _dbHash) {
+                db = data; _dbHash = newHash;
+                safeStorage.setItem('asis_session_v8', JSON.stringify({ user: currentUser, db, hash: _dbHash }));
+                _empNameCache.clear(); _clientNameCache.clear(); _companyNameCache.clear();
+                evaluateNotifications();
+                if (_currentView) {
+                    renderView(_currentView);
+                    var indicator = document.getElementById('newDataIndicator');
+                    if (indicator) indicator.style.display = 'inline-block';
+                }
+            }
+        } catch (e) { console.error('Error syncing: ', e); }
+        finally {
+            _syncing = false;
+            if (syncIcon) syncIcon.classList.remove('spin-animation');
+        }
+    }
+
+    async function syncManual() {
+        showL(true); await sync(); showL(false);
+        showToast('Base de datos sincronizada', 'success');
+    }
+</script>

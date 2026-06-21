@@ -1,0 +1,187 @@
+<script>
+    var calYear = new Date().getFullYear(), calMonth = new Date().getMonth();
+    var _activeAsisIdToClose = null, _actividadEditando = null;
+
+    function nav(view) {
+        _currentView = view;
+        document.querySelectorAll('.nav-link').forEach(function (l) { l.classList.remove('active'); });
+        var activeLink = document.getElementById('n-' + view); if (activeLink) activeLink.classList.add('active');
+
+        document.querySelectorAll('.bottom-nav-item').forEach(function (l) { l.classList.remove('active'); });
+        var activeBottom = document.getElementById('bm-' + view); if (activeBottom) activeBottom.classList.add('active');
+
+        document.getElementById('headerTitle').innerText = humanize(view);
+        if (window.innerWidth < 992) toggleSidebar(false);
+        renderView(view);
+        document.getElementById('newDataIndicator').style.display = 'none';
+    }
+
+    function renderView(view) {
+        var container = document.getElementById('view-container'); container.innerHTML = '';
+        var section = document.createElement('div'); section.id = 'v-' + view; section.className = 'view-section active';
+        container.appendChild(section);
+
+        switch (view) {
+            case 'dashboard': renderAdminDashboard(section); break;
+            case 'productividad': renderProductividad(section); break;
+            case 'inicio': renderEmpInicio(section); break;
+            case 'asistencia': renderAsistenciaForm(section); break;
+            case 'asistencias': renderRegistros(section); break;
+            case 'empleados': renderEmpleados(section); break;
+            case 'accesos': renderAccesos(section); break;
+            case 'clientes': renderClientes(section); break;
+            case 'empresas': renderEmpresas(section); break;
+            case 'sedes': renderSedes(section); break;
+            case 'gps': renderGpsTracking(section); break;
+            case 'calendario': renderCalendar(section, false); break;
+            case 'cal_personal': renderCalendar(section, true); break;
+            case 'tareas': renderEmpTareas(section); break;
+            case 'perfil': renderPerfil(section); break;
+            case 'crm': renderCRM360(section); break;
+            case 'pipeline': renderSalesPipeline(section); break;
+            case 'productos': renderProductosCatalog(section); break;
+            case 'muestras': renderMuestrasEntregadas(section); break;
+            case 'incidencias': renderIncidenciasTecnicas(section); break;
+            case 'documentos': renderGestionDocumental(section); break;
+            case 'portal_cliente': renderPortalCliente(section); break;
+        }
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+    }
+
+    function renderAdminDashboard(el) {
+        var asistencias = db.asistencias || [];
+        asistencias.sort((a, b) => new Date(b.fecha + 'T' + (b.horaEntrada || '00:00:00')) - new Date(a.fecha + 'T' + (a.horaEntrada || '00:00:00')));
+        var todayStr = getLocalDateString();
+        var asistenciasHoy = asistencias.filter(a => a.fecha === todayStr).length;
+        var totalTasks = (db.calendario || []).filter(c => c.estado !== 'COMPLETADO' && c.estado !== 'CANCELADO').length;
+
+        var pipelineVal = 0;
+        (db.pipeline || []).forEach(p => { if (p.estado !== 'GANADO' && p.estado !== 'PERDIDO') pipelineVal += parseFloat(p.valorEstimado || 0); });
+
+        var html = '<div class="row g-4 mb-4">' +
+            '<div class="col-md-3"><div class="stat-card"><h6>ASISTENCIAS HOY</h6><h2>' + asistenciasHoy + '</h2></div></div>' +
+            '<div class="col-md-3"><div class="stat-card"><h6>VALOR PIPELINE</h6><h2>$' + pipelineVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '</h2></div></div>' +
+            '<div class="col-md-3"><div class="stat-card"><h6>TAREAS ACTIVAS</h6><h2>' + totalTasks + '</h2></div></div>' +
+            '<div class="col-md-3"><div class="stat-card"><h6>INCIDENCIAS RECIENTES</h6><h2>' + (db.incidencias || []).filter(i => i.estado === 'ABIERTO').length + '</h2></div></div>' +
+            '</div>';
+
+        html += '<div class="row g-4"><div class="col-lg-8"><div class="glass-card">' +
+            '<div class="d-flex justify-content-between align-items-center mb-3 flex-wrap">' +
+            '<h5 class="fw-bold mb-0"><i class="bi bi-clock-history"></i> Registros de Asistencia Recientes</h5>' +
+            '<div style="max-width:250px;"><input type="text" class="form-control form-control-sm" id="searchRegistros" placeholder="Filtrar..." oninput="filterRegistros()"></div>' +
+            '</div><div class="table-responsive"><table class="table"><thead><tr><th>Colaborador</th><th>Fecha</th><th>Entrada</th><th>Salida</th><th>Horas</th><th>Cliente</th><th>Estado</th></tr></thead><tbody id="registrosBody">';
+
+        asistencias.slice(0, 15).forEach(a => {
+            var emp = (db.empleados || []).find(e => e.id == a.empleadoId);
+            html += '<tr data-nombre="' + (emp ? emp.nombre.toLowerCase() : '') + '">' +
+                '<td><strong>' + (emp ? emp.nombre : 'N/A') + '</strong></td>' +
+                '<td>' + formatDateShort(a.fecha) + '</td>' +
+                '<td>' + (a.horaEntrada || '-') + '</td>' +
+                '<td>' + (a.horaSalida || '-') + '</td>' +
+                '<td>' + (a.horasTrabajadas || '-') + '</td>' +
+                '<td>' + getClientName(a.clienteId) + '</td>' +
+                '<td><span class="badge ' + (a.estado === 'COMPLETO' ? 'bg-success' : 'bg-warning text-dark') + '">' + (a.estado || 'ABIERTO') + '</span></td>' +
+                '</tr>';
+        });
+        html += '</tbody></table></div></div></div>';
+
+        var proximosVencer = (db.lotes || []).filter(l => {
+            if (!l.fechaVencimiento) return false;
+            return (new Date(l.fechaVencimiento) - new Date() > 0) && (new Date(l.fechaVencimiento) - new Date() < 30 * 24 * 60 * 60 * 1000) && l.estado !== 'VENCIDO';
+        });
+
+        html += '<div class="col-lg-4"><div class="glass-card"><h5 class="fw-bold mb-3"><i class="bi bi-exclamation-triangle text-warning"></i> Alertas Químicas de Lotes</h5>';
+        if (proximosVencer.length === 0) html += '<div class="alert alert-light text-center py-4 text-muted small">No hay lotes próximos a vencer.</div>';
+        else {
+            proximosVencer.forEach(l => {
+                var prod = (db.productos || []).find(p => p.id == l.productoId)?.nombre || 'Producto';
+                html += '<div class="border-start border-3 border-warning p-2 mb-2 rounded bg-light small"><strong>' + prod + '</strong><br>Lote: ' + l.numeroLote + ' - Stock: ' + l.stockLote + '</div>';
+            });
+        }
+        html += '</div></div></div>'; el.innerHTML = html;
+    }
+
+    function renderCRM360(el) {
+        var html = '<div class="glass-card"><div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2"><h5 class="fw-bold m-0"><i class="bi bi-chat-left-text"></i> CRM 360° - Interacciones</h5><button class="btn btn-info text-white btn-sm" onclick="openNewModal(\'crmHistorial\')">Registrar Interacción</button></div>' +
+            '<div class="row g-3 mb-4"><div class="col-md-6"><select id="crmClientFilter" class="form-select" onchange="filterCRMTimeline()"><option value="">-- Todos los Clientes --</option>';
+        (db.clientes || []).forEach(c => { html += '<option value="' + c.id + '">' + c.nombre + '</option>'; });
+        html += '</select></div><div class="col-md-6"><select id="crmTypeFilter" class="form-select" onchange="filterCRMTimeline()"><option value="">-- Todos los Tipos --</option><option value="Visita">Visita</option><option value="Llamada">Llamada</option><option value="WhatsApp">WhatsApp</option></select></div></div><div id="crmTimelineContainer"></div></div>';
+        el.innerHTML = html; filterCRMTimeline();
+    }
+
+    function filterCRMTimeline() {
+        var cl = document.getElementById('crmClientFilter')?.value, tp = document.getElementById('crmTypeFilter')?.value;
+        var container = document.getElementById('crmTimelineContainer'); if (!container) return;
+        var filtered = (db.crmhistorial || []).filter(x => (!cl || String(x.clienteId) === String(cl)) && (!tp || String(x.tipo).toLowerCase() === tp.toLowerCase()));
+        filtered.sort((a, b) => new Date(b.fechaHora) - new Date(a.fechaHora));
+        
+        var html = '<div class="hubspot-timeline">';
+        filtered.forEach(item => {
+            html += '<div class="timeline-card-item"><div class="timeline-card-content"><div class="timeline-meta"><strong>' + item.tipo.toUpperCase() + '</strong><span>' + formatDate(item.fechaHora) + '</span></div><div class="timeline-body"><p>' + item.detalle + '</p><small>Cliente: ' + getClientName(item.clienteId) + '</small></div></div></div>';
+        });
+        container.innerHTML = filtered.length ? html + '</div>' : '<div class="alert alert-light text-center">Sin registros</div>';
+    }
+
+    function renderSalesPipeline(el) {
+        var total = 0; (db.pipeline || []).forEach(p => { if (p.estado !== 'PERDIDO') total += parseFloat(p.valorEstimado || 0); });
+        var html = '<div class="glass-card"><h5>Pipeline de Ventas - Activo: $' + total.toLocaleString() + '</h5><div class="pipeline-board">';
+        ['PROSPECTO', 'CONTACTADO', 'INTERESADO', 'COTIZACION', 'NEGOCIACION', 'GANADO', 'PERDIDO'].forEach(st => {
+            var stageDeals = (db.pipeline || []).filter(d => String(d.estado).toUpperCase() === st);
+            html += '<div class="pipeline-column"><h6>' + st + ' (' + stageDeals.length + ')</h6>';
+            stageDeals.forEach(d => { html += '<div class="pipeline-card" onclick="openEditModal(\'pipeline\',\''+d.id+'\')"><strong>' + getClientName(d.clienteId) + '</strong><br><span class="text-success">$' + parseFloat(d.valorEstimado||0).toLocaleString() + '</span></div>'; });
+            html += '</div>';
+        });
+        el.innerHTML = html + '</div></div>';
+    }
+
+    function renderProductosCatalog(el) {
+        var html = '<div class="glass-card"><h5>Catálogo de Productos y Lotes</h5><div class="table-responsive"><table class="table"><thead><tr><th>ID</th><th>Nombre</th><th>U. Medida</th><th>Precio Base</th><th>Stock</th><th>Estado</th></tr></thead><tbody>';
+        (db.productos || []).forEach(p => { html += '<tr><td>' + p.id + '</td><td>' + p.nombre + '</td><td>' + p.unidadMedida + '</td><td>$' + p.precioBase + '</td><td>' + p.stockGeneral + '</td><td>' + p.estado + '</td></tr>'; });
+        el.innerHTML = html + '</tbody></table></div></div>';
+    }
+
+    function renderEmpInicio(el) {
+        var activeCheckIn = (db.asistencias || []).find(a => String(a.empleadoId).trim() === String(currentUser.empId).trim() && String(a.estado).toUpperCase() === 'ABIERTO');
+        var html = '<div class="row g-4">';
+        if (activeCheckIn) {
+            _activeAsisIdToClose = activeCheckIn.id;
+            html += '<div class="col-12"><div class="glass-card border-start border-5 border-warning"><h5><span class="badge bg-warning text-dark mb-2">VISITA COMERCIAL ACTIVA</span></h5><h3>' + getClientName(activeCheckIn.clienteId) + '</h3><p>Ingreso: ' + activeCheckIn.horaEntrada + '</p><button class="btn btn-danger rounded-pill" onclick="openSalidaModal(\'' + activeCheckIn.id + '\')">Registrar Salida</button></div></div>';
+        } else {
+            html += '<div class="col-lg-7"><div class="glass-card"><h5>Registrar Entrada de Visita</h5><form id="asistenciaForm" onsubmit="event.preventDefault(); submitEntrada();"><div class="mb-3"><label class="form-label small fw-bold">CLIENTE</label><select id="asisClienteId" class="form-select" required onchange="populateSedesForCheckIn()"><option value="">-- Seleccionar --</option>';
+            (db.clientes || []).forEach(c => { html += '<option value="' + c.id + '">' + c.nombre + '</option>'; });
+            html += '</select></div><div class="mb-3"><label class="form-label small fw-bold">SEDE</label><select id="asisSedeId" class="form-select" required><option value="">-- Seleccionar Sede --</option></select></div><div class="mb-3"><label class="form-label small fw-bold">ACTIVIDAD</label><textarea id="asisObsEntrada" class="form-control" rows="2" required></textarea></div><div class="mb-3"><label class="form-label small fw-bold">FOTO</label><div class="photo-box" onclick="document.getElementById(\'asisFotoInput\').click()"><img id="asisFotoPreview" src="https://via.placeholder.com/300x150?text=Tomar+Foto+Ingreso"></div><input type="file" id="asisFotoInput" class="d-none" accept="image/*" capture="camera" required onchange="compressAndPreviewPhoto(this, \'asisFotoPreview\', \'asisFotoBase64\')"><input type="hidden" id="asisFotoBase64"></div><button type="submit" class="btn btn-info text-white w-100">REGISTRAR INGRESO</button></form></div></div>';
+        }
+        el.innerHTML = html + '</div>';
+    }
+
+    function populateSedesForCheckIn() {
+        var cid = document.getElementById('asisClienteId').value, select = document.getElementById('asisSedeId'); if(!select) return;
+        select.innerHTML = '<option value="">-- Seleccionar Sede --</option>';
+        (db.sedes || []).filter(s => String(s.clienteId) === String(cid)).forEach(s => { select.innerHTML += '<option value="' + s.id + '">' + s.nombre + '</option>'; });
+    }
+
+    async function submitEntrada() {
+        showL(true); var lat = '', lng = '';
+        try { var pos = await getGpsLocation(); lat = pos.coords.latitude; lng = pos.coords.longitude; } catch(e) { showToast('Ubicación GPS omitida', 'warning'); }
+        var payload = { action: 'create', token: currentUser.token, table: 'Asistencias', data: { empleadoId: currentUser.empId, clienteId: document.getElementById('asisClienteId').value, SedeId: document.getElementById('asisSedeId').value, fecha: getLocalDateString(), horaEntrada: new Date().toLocaleTimeString('es-ES', { hour12: false }), latEntrada: lat, lngEntrada: lng, observacionesEntrada: document.getElementById('asisObsEntrada').value, fotoEntrada: document.getElementById('asisFotoBase64').value, estado: 'ABIERTO' } };
+        try { var res = await apiCall('POST', CONFIG.SCRIPT_URL, payload); if (res.status === 'success') { showToast('Ingreso guardado', 'success'); if (res.newToken) currentUser.token = res.newToken; await sync(); nav('inicio'); } else { showToast(res.message, 'error'); } } catch(e) { showToast(e.message, 'error'); } showL(false);
+    }
+
+    function renderProductividad(el) { el.innerHTML = '<div class="glass-card"><h5>Módulo de Productividad Comercial</h5></div>'; }
+    function renderAsistenciaForm(el) { renderEmpInicio(el); }
+    function renderRegistros(el) { el.innerHTML = '<div class="glass-card"><h5>Historial Completo de Operaciones</h5></div>'; }
+    function renderEmpleados(el) { el.innerHTML = '<div class="glass-card"><h5>Gestión de Colaboradores</h5></div>'; }
+    function renderAccesos(el) { el.innerHTML = '<div class="glass-card"><h5>Seguridad de Accesos</h5></div>'; }
+    function renderClientes(el) { el.innerHTML = '<div class="glass-card"><h5>Cartera Corporativa de Clientes</h5></div>'; }
+    function renderEmpresas(el) { el.innerHTML = '<div class="glass-card"><h5>Empresas y Unidades del Grupo</h5></div>'; }
+    function renderSedes(el) { el.innerHTML = '<div class="glass-card"><h5>Sedes y Almacenes Autorizados</h5></div>'; }
+    function renderGpsTracking(el) { el.innerHTML = '<div class="glass-card"><h5>Seguimiento de Geolocalización</h5></div>'; }
+    function renderCalendar(el, p) { el.innerHTML = '<div class="glass-card"><h5>Calendario de Operaciones</h5></div>'; }
+    function renderMuestrasEntregadas(el) { el.innerHTML = '<div class="glass-card"><h5>Trazabilidad de Muestras Químicas</h5></div>'; }
+    function renderIncidenciasTecnicas(el) { el.innerHTML = '<div class="glass-card"><h5>Gestión de Reclamos y Soporte</h5></div>'; }
+    function renderGestionDocumental(el) { el.innerHTML = '<div class="glass-card"><h5>Hojas MSDS y Certificaciones</h5></div>'; }
+    function renderPortalCliente(el) { el.innerHTML = '<div class="glass-card"><h5>Portal Privado Spartan</h5></div>'; }
+    function renderEmpTareas(el) { el.innerHTML = '<div class="glass-card"><h5>Mis Tareas Asignadas</h5></div>'; }
+    function renderPerfil(el) { el.innerHTML = '<div class="glass-card"><h5>Mi Perfil de Operador</h5></div>'; }
+    function openSalidaModal(id) { _activeAsisIdToClose = id; new bootstrap.Modal(document.getElementById('salidaModal')).show(); }
+</script>
